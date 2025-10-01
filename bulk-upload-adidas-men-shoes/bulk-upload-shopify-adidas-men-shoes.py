@@ -245,9 +245,28 @@ def generate_product_jsonl(product_list, processed_skus):
             shopify_id = get_shopify_product_id(parent_sku)
             if shopify_id:
                 # UPDATE existing product
+                # Build tags including discounted if compareAtPrice > price
+                base_tags = [
+                    "uploaded_by_script",
+                    f"sku:{product['sku']}",
+                    "new",
+                    product["gender"],
+                    product["productType"],
+                    product["brand"],
+                ]
+                is_discounted = False
+                try:
+                    price_val = float(product.get("price", 0) or 0)
+                    prev_val = float(product.get("previousPrice", 0) or 0)
+                    is_discounted = prev_val > 0 and price_val > 0 and prev_val > price_val
+                except Exception:
+                    is_discounted = False
+                if is_discounted:
+                    base_tags.append("discounted")
                 line = {
                     "input": {
                         "id": shopify_id,  # Include ID for update
+                        "tags": base_tags,
                         "productOptions": [
                             {
                                 "name": "Size",
@@ -301,12 +320,30 @@ def generate_product_jsonl(product_list, processed_skus):
         
         # Write creates
         for product in creates:
+            # Build tags including discounted if compareAtPrice > price
+            base_tags = [
+                "uploaded_by_script",
+                f"sku:{product['sku']}",
+                "new",
+                product["gender"],
+                product["productType"],
+                product["brand"],
+            ]
+            is_discounted = False
+            try:
+                price_val = float(product.get("price", 0) or 0)
+                prev_val = float(product.get("previousPrice", 0) or 0)
+                is_discounted = prev_val > 0 and price_val > 0 and prev_val > price_val
+            except Exception:
+                is_discounted = False
+            if is_discounted:
+                base_tags.append("discounted")
             line = {
                 "input": {
                     "title": product["name"],
                     "status": "DRAFT",
                     "productType": product["productType"],
-                    "tags": ["uploaded_by_script", f"sku:{product['sku']}", "new", product["gender"], product["productType"], product["brand"]],
+                    "tags": base_tags,
                     "vendor": product["brand"],
                     "descriptionHtml": f"<p>{product['description']}</p>",
                     "productOptions": [
