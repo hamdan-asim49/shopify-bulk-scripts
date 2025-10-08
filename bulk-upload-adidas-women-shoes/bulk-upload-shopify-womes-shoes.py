@@ -8,8 +8,10 @@ import math
 import time
 import html
 
-URLS = ['https://www.jdsports.co.uk/women/womens-footwear/brand/adidas/',
-        'https://www.jdsports.co.uk/women/womens-accessories/brand/adidas/']
+# URLS = ['https://www.jdsports.co.uk/women/womens-footwear/brand/adidas/',
+#         'https://www.jdsports.co.uk/women/womens-accessories/brand/adidas/']
+
+URLS = ['https://www.jdsports.co.uk/women/womens-accessories/brand/adidas/']
 
 
 SHOPIFY_STORE = "cnwk10-ew.myshopify.com"
