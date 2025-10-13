@@ -7,6 +7,7 @@ import xml.etree.ElementTree as ET
 import math
 import time
 import html
+import sys
 
 URLS = ['https://www.jdsports.co.uk/men/brand/nike/',]
 
@@ -752,7 +753,7 @@ def fetch_total_product_counts(urls):
     processed_skus = load_processed_skus()
     all_product_data = []
     current_jd_skus = set()  # Track current SKUs from JD Sports
-    
+    failed_skus = set()
 
     for url in urls:
         try:
@@ -780,13 +781,15 @@ def fetch_total_product_counts(urls):
                 response = requests.get(collectionPaginatedURl, headers=headers, timeout=30)
                 data = extract_dataObject_json(response.text)
             except requests.exceptions.RequestException as e:
-                print(f"⏭️  Skipping page due to connection error: {collectionPaginatedURl} - {e}")
+                print(f"❌ Could not fetch products from a page: {collectionPaginatedURl}")
+                print(f"   Error details: {e}")
                 log_skipped_product(collectionPaginatedURl, f"Connection error: {str(e)}")
-                continue
+                sys.exit(1)
             except Exception as e:
-                print(f"⏭️  Skipping page due to unexpected error: {collectionPaginatedURl} - {e}")
+                print(f"❌ Could not fetch products from a page: {collectionPaginatedURl}")
+                print(f"   Error details: {e}")
                 log_skipped_product(collectionPaginatedURl, f"Unexpected error: {str(e)}")
-                continue
+                sys.exit(1)
             if not data or 'items' not in data:
                 print(f"⏭️  Skipping page due to missing items: {collectionPaginatedURl}")
                 log_skipped_product(collectionPaginatedURl, "Missing items in dataObject")
@@ -795,6 +798,10 @@ def fetch_total_product_counts(urls):
                 if item.get("plu") in current_jd_skus:
                     print(f'⏭️  Skipping duplicate PLU: {item.get("plu")} - {item.get("description")})')
                     continue
+                
+                # Track current SKU
+                if item.get("plu"):
+                    current_jd_skus.add(item.get("plu"))
                 product_url = f'https://www.jdsports.co.uk/product/{item.get("description", "").replace(" ", "-").lower()}/{item.get("plu", "")}'
                 print(f'{count} - {product_url}')
                 try:
@@ -804,32 +811,39 @@ def fetch_total_product_counts(urls):
                 except requests.exceptions.Timeout:
                     print(f"⏭️  Skipping product due to connection timeout: {product_url}")
                     log_skipped_product(product_url, "Connection timeout")
+                    failed_skus.add(item.get("plu"))
                     continue
                 except requests.exceptions.ConnectionError as e:
                     print(f"⏭️  Skipping product due to connection error: {product_url}")
                     log_skipped_product(product_url, f"Connection error: {str(e)}")
+                    failed_skus.add(item.get("plu"))
                     continue
                 except requests.exceptions.RequestException as e:
                     print(f"⏭️  Skipping product due to request error: {product_url}")
                     log_skipped_product(product_url, f"Request error: {str(e)}")
+                    failed_skus.add(item.get("plu"))
                     continue
                 except Exception as e:
                     print(f"⏭️  Skipping product due to unexpected error: {product_url} - {e}")
                     log_skipped_product(product_url, f"Unexpected error: {str(e)}")
+                    failed_skus.add(item.get("plu"))
                     continue
                 try:
                     data_price, data_previous_price, original_cost, price_div_found = extract_price_data(product_response.text)
                 except Exception as e:
                     print(f"⏭️  Skipping product due to price extraction error: {product_url} - {e}")
                     log_skipped_product(product_url, f"Price extraction error: {str(e)}")
+                    failed_skus.add(item.get("plu"))
                     continue
                 if not price_div_found:
                     print(f"⏭️  Skipping product due to missing recentData div: {product_url}")
                     log_skipped_product(product_url, "Missing recentData div")
+                    failed_skus.add(item.get("plu"))
                     continue
                 if not data_price or not data_price.strip():
                     print(f"⏭️  Skipping product due to empty price data: {product_url}")
                     log_skipped_product(product_url, "Empty price data")
+                    failed_skus.add(item.get("plu"))
                     continue
                 print("\n**************************\n")
                 try:
@@ -837,6 +851,7 @@ def fetch_total_product_counts(urls):
                 except Exception as e:
                     print(f"⏭️  Skipping product due to image extraction error: {product_url} - {e}")
                     log_skipped_product(product_url, f"Image extraction error: {str(e)}")
+                    failed_skus.add(item.get("plu"))
                     continue
                 variants_with_quantity = []
                 for variant in product_data.get('variants', []):
@@ -865,8 +880,6 @@ def fetch_total_product_counts(urls):
                     "previousPrice": data_previous_price,
                     "originalCost": original_cost,
                 }
-                if product_data.get('plu'):
-                    current_jd_skus.add(product_data['plu'])
                 category = product_description['category'] if product_description and 'category' in product_description else ""
                 category_parts = category.split('/') if category else []
                 gender = category_parts[0].strip() if len(category_parts) > 0 else ""
@@ -889,7 +902,7 @@ def fetch_total_product_counts(urls):
     print(f"   Previous SKUs: {len(previous_skus)}")
     print(f"   Current JD SKUs: {len(current_jd_skus)}")
     print(f"   SKUs to delete: {len(skus_to_delete)}")
-    
+    print(f"   SKUS Failed: {len(failed_skus)}")
     if skus_to_delete:
         print(f"   Products to delete: {list(skus_to_delete)}")
         
