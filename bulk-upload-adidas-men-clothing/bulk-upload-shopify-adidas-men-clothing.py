@@ -8,18 +8,13 @@ import math
 import time
 import html
 import sys
+import os
+
+# Add parent directory to path to import parameters
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from parameters import SHOPIFY_STORE, ACCESS_TOKEN, API_VERSION, SHOPIFY_API_URL, SHOPIFY_GRAPHQL_URL, gbp_to_aud
 
 URLS = ['https://www.jdsports.co.uk/men/mens-clothing/brand/adidas/',]
-
-
-SHOPIFY_STORE = "cnwk10-ew.myshopify.com"
-ACCESS_TOKEN = "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"
-API_VERSION = "2025-07"
-
-SHOPIFY_API_URL = f"https://{SHOPIFY_STORE}/admin/api/{API_VERSION}/products.json"
-SHOPIFY_GRAPHQL_URL = f"https://{SHOPIFY_STORE}/admin/api/{API_VERSION}/graphql.json"
-
-gbp_to_aud = 2.1
 
 def extract_dataObject_json(html):
     soup = BeautifulSoup(html, 'html.parser')
