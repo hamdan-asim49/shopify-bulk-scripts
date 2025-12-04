@@ -319,7 +319,7 @@ def generate_product_jsonl(product_list, processed_skus):
             # Build tags including discounted if compareAtPrice > price
             base_tags = [
                 "uploaded_by_script",
-                "nz-prod"
+                "nz-prod",
                 f"sku:{product['sku']}",
                 "new",
                 product["gender"],
