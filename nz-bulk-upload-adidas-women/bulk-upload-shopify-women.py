@@ -273,7 +273,7 @@ def generate_product_jsonl(product_list, processed_skus):
                         "variants": [
                             {
                                 "price": str(product["price"]),
-                                "sku": variant["upc"],
+                                "sku": product["sku"].split("_")[0],
                                 "barcode": variant["upc"],
                                 "compareAtPrice": str(product["previousPrice"]) if product["previousPrice"] != '' else '0',
                                 "inventoryItem": {
@@ -295,6 +295,13 @@ def generate_product_jsonl(product_list, processed_skus):
                                 ],
                             }
                             for variant in product["variants"]
+                        ],
+                        "files": [
+                            {
+                                    "alt": f"{product['name']} image",
+                                    "originalSource": img.split("?")[0],
+                                    "filename": f"{product['name']}-LUZActive-Image-{index}"
+                                } for index, img in enumerate(product["images"], 1)
                         ]
                     }
                 }
@@ -353,7 +360,7 @@ def generate_product_jsonl(product_list, processed_skus):
                     "variants": [
                         {
                             "price": str(product["price"]),
-                            "sku": variant["upc"],
+                            "sku": product["sku"].split("_")[0],
                             "barcode": variant["upc"],
                             "compareAtPrice": str(product["previousPrice"]) if product["previousPrice"] != '' else '0',
                             "inventoryItem": {
@@ -379,8 +386,9 @@ def generate_product_jsonl(product_list, processed_skus):
                     "files": [
                         {
                             "alt": f"{product['name']} image",
-                            "originalSource": img.split("?")[0]
-                        } for img in product["images"]
+                            "originalSource": img.split("?")[0],
+                            "filename": f"{product['name']} - LUZActive - Image {index}"
+                        } for index, img in enumerate(product["images"], 1)
                     ]
                 }
             }
