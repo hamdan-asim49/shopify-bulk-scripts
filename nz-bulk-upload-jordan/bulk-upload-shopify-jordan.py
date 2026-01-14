@@ -297,13 +297,6 @@ def generate_product_jsonl(product_list, processed_skus):
                                 ],
                             }
                             for variant in product["variants"]
-                        ],
-                        "files": [
-                            {
-                                "alt": f"{product['name']} image",
-                                "originalSource": img.split("?")[0],
-                                "filename": f"{product['name']}-LUZActive-Image-{index}"
-                            } for index, img in enumerate(product["images"], 1)
                         ]
                     }
                 }
