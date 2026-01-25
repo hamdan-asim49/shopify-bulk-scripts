@@ -531,6 +531,20 @@ def log_skipped_product(product_url, reason):
     with open("skipped_products.txt", "a", encoding="utf-8") as f:
         f.write(f"{product_url} - {reason}\n")
 
+def calculate_price_markup(base_price):
+    """
+    Calculate markup based on price ranges:
+    - 0-60: add 25
+    - 61-130: add 30% of the amount
+    - 130+: add 75
+    """
+    if base_price <= 60:
+        return base_price + 25
+    elif base_price <= 130:
+        return base_price + (base_price * 0.30)
+    else:
+        return base_price + 75
+
 def extract_price_data(html):
     """Extract price and previous price from recentData div"""
     soup = BeautifulSoup(html, 'html.parser')
@@ -540,16 +554,22 @@ def extract_price_data(html):
         data_price = recent_data_div.get('data-price', '')
         data_previous_price = recent_data_div.get('data-previous-price', '')
         original_cost = recent_data_div.get('data-price', '')
-        # Convert prices to float, multiply by nzd_to_aud, add 150, ceil to whole number, then convert back to string
+        
+        # Process data_price with conditional markup
         if data_price and data_price.strip():
             try:
-                price_float = math.ceil(float(data_price) * nzd_to_aud + 150)
-                data_price = str(price_float)
+                # Convert to AUD first
+                price_in_aud = float(data_price) * nzd_to_aud
+                # Apply conditional markup based on price range
+                final_price = calculate_price_markup(price_in_aud)
+                # Ceil to whole number and convert to string
+                data_price = str(math.ceil(final_price))
             except ValueError:
                 data_price = ''
         else:
             data_price = ''
         
+        # Process original_cost (no markup, just conversion)
         if original_cost and original_cost.strip():
             try:
                 original_cost_float = math.ceil(float(original_cost) * nzd_to_aud)
@@ -559,10 +579,15 @@ def extract_price_data(html):
         else:
             original_cost = ''
         
+        # Process data_previous_price with conditional markup
         if data_previous_price and data_previous_price.strip():
             try:
-                prev_price_float = math.ceil(float(data_previous_price) * nzd_to_aud + 150)
-                data_previous_price = str(prev_price_float)
+                # Convert to AUD first
+                prev_price_in_aud = float(data_previous_price) * nzd_to_aud
+                # Apply conditional markup based on price range
+                final_prev_price = calculate_price_markup(prev_price_in_aud)
+                # Ceil to whole number and convert to string
+                data_previous_price = str(math.ceil(final_prev_price))
             except ValueError:
                 data_previous_price = ''
         else:
