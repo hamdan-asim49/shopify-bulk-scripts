@@ -272,7 +272,7 @@ def generate_product_jsonl(product_list, processed_skus):
                         "variants": [
                             {
                                 "price": str(product["price"]),
-                                "sku": product["sku"].split("_")[0],
+                                "sku": f"{product['sku'].split('_')[0]}_{index}",
                                 "barcode": variant["upc"],
                                 "compareAtPrice": str(product["previousPrice"]) if product["previousPrice"] != '' else '0',
                                 "inventoryItem": {
@@ -293,7 +293,7 @@ def generate_product_jsonl(product_list, processed_skus):
                                     }
                                 ],
                             }
-                            for variant in product["variants"]
+                            for index, variant in enumerate(product["variants"], start=1)
                         ]
                     }
                 }
@@ -352,7 +352,7 @@ def generate_product_jsonl(product_list, processed_skus):
                     "variants": [
                         {
                             "price": str(product["price"]),
-                            "sku": product["sku"].split("_")[0],
+                            "sku": f"{product['sku'].split('_')[0]}_{index}",
                             "barcode": variant["upc"],
                             "compareAtPrice": str(product["previousPrice"]) if product["previousPrice"] != '' else '0',
                             "inventoryItem": {
@@ -373,7 +373,7 @@ def generate_product_jsonl(product_list, processed_skus):
                                 }
                             ]
                         }
-                        for variant in product["variants"]
+                        for index, variant in enumerate(product["variants"], start=1)
                     ],
                     "files": [
                         {
