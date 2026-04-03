@@ -8,6 +8,7 @@ import math
 import time
 import html
 import sys
+from datetime import datetime
 import os
 
 # Add parent directory to path to import parameters
@@ -233,7 +234,34 @@ def generate_product_jsonl(product_list, processed_skus):
     
     for product in product_list:
         parent_sku = product["sku"]
-        
+
+        # Handle failed products - only update existing ones to DRAFT with failed tag
+        if product.get("failed"):
+            if parent_sku in processed_skus:
+                shopify_id = get_shopify_product_id(parent_sku)
+                if shopify_id:
+                    line = {
+                        "input": {
+                            "id": shopify_id,
+                            "status": "DRAFT",
+                            "tags": [
+                                "uploaded_by_script",
+                                "nz-prod",
+                                f"sku:{parent_sku}",
+                                "current-status: failed",
+                                "last_action: updated",
+                                f"last_action_on: {datetime.now().strftime('%d/%m/%Y %I:%M %p')}",
+                            ],
+                        }
+                    }
+                    updates.append(line)
+                    print(f"⚠️  Setting failed product to DRAFT: {product['name']} (SKU: {parent_sku})")
+                else:
+                    print(f"⚠️  Failed product SKU {parent_sku} not found in Shopify, skipping update")
+            else:
+                print(f"⚠️  Failed product SKU {parent_sku} is new, skipping (no Shopify product to update)")
+            continue
+
         # Check if this SKU was processed before
         if parent_sku in processed_skus:
             # Get the Shopify product ID
@@ -259,6 +287,8 @@ def generate_product_jsonl(product_list, processed_skus):
                     is_discounted = False
                 if is_discounted:
                     base_tags.append("discounted")
+                base_tags.append("last_action: updated")
+                base_tags.append(f"last_action_on: {datetime.now().strftime('%d/%m/%Y %I:%M %p')}")
                 line = {
                     "input": {
                         "id": shopify_id,  # Include ID for update
@@ -266,6 +296,7 @@ def generate_product_jsonl(product_list, processed_skus):
                         "productOptions": [
                             {
                                 "name": "Size",
+                                "linkedMetafield": None,
                                 "values": [{"name": variant["name"]} for variant in product["variants"]]
                             }
                         ],
@@ -335,6 +366,8 @@ def generate_product_jsonl(product_list, processed_skus):
                 is_discounted = False
             if is_discounted:
                 base_tags.append("discounted")
+            base_tags.append("last_action: created")
+            base_tags.append(f"last_action_on: {datetime.now().strftime('%d/%m/%Y %I:%M %p')}")
             line = {
                 "input": {
                     "title": product["name"],
@@ -525,6 +558,20 @@ def run_bulk_product_set(staged_upload_path):
     print("📦 Bulk operation initiated:")
     print(json.dumps(data, indent=2))
     return data
+
+def fetch_with_retry(url, headers=None, timeout=30, retries=3, delay=5):
+    """Fetch a URL with retry logic. Returns response or raises the last exception."""
+    for attempt in range(1, retries + 1):
+        try:
+            response = requests.get(url, headers=headers or {}, timeout=timeout)
+            return response
+        except Exception as e:
+            if attempt < retries:
+                print(f"   Attempt {attempt}/{retries} failed for {url}: {e}")
+                print(f"   Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                raise
 
 def log_skipped_product(product_url, reason):
     """Log skipped products to a text file"""
@@ -780,15 +827,15 @@ def fetch_total_product_counts(urls):
 
     for url in urls:
         try:
-            response = requests.request("GET", url, headers=headers, data=payload)
+            response = fetch_with_retry(url, headers=headers)
             data = extract_dataObject_json(response.text)
         except requests.exceptions.RequestException as e:
-            print(f"⏭️  Skipping URL due to connection error: {url} - {e}")
-            log_skipped_product(url, f"Connection error: {str(e)}")
+            print(f"⏭️  Skipping URL due to connection error after 3 retries: {url} - {e}")
+            log_skipped_product(url, f"Connection error after 3 retries: {str(e)}")
             continue
         except Exception as e:
-            print(f"⏭️  Skipping URL due to unexpected error: {url} - {e}")
-            log_skipped_product(url, f"Unexpected error: {str(e)}")
+            print(f"⏭️  Skipping URL due to unexpected error after 3 retries: {url} - {e}")
+            log_skipped_product(url, f"Unexpected error after 3 retries: {str(e)}")
             continue
         if not data:
             print(f"⏭️  Skipping URL due to missing dataObject: {url}")
@@ -801,17 +848,17 @@ def fetch_total_product_counts(urls):
         for page in range(1, totalPages + 1):
             collectionPaginatedURl = f"{url}?from={itemsDone}"
             try:
-                response = requests.get(collectionPaginatedURl, headers=headers, timeout=30)
+                response = fetch_with_retry(collectionPaginatedURl, headers=headers)
                 data = extract_dataObject_json(response.text)
             except requests.exceptions.RequestException as e:
-                print(f"❌ Could not fetch products from a page: {collectionPaginatedURl}")
+                print(f"❌ Could not fetch products from a page after 3 retries: {collectionPaginatedURl}")
                 print(f"   Error details: {e}")
-                log_skipped_product(collectionPaginatedURl, f"Connection error: {str(e)}")
+                log_skipped_product(collectionPaginatedURl, f"Connection error after 3 retries: {str(e)}")
                 sys.exit(1)
             except Exception as e:
-                print(f"❌ Could not fetch products from a page: {collectionPaginatedURl}")
+                print(f"❌ Could not fetch products from a page after 3 retries: {collectionPaginatedURl}")
                 print(f"   Error details: {e}")
-                log_skipped_product(collectionPaginatedURl, f"Unexpected error: {str(e)}")
+                log_skipped_product(collectionPaginatedURl, f"Unexpected error after 3 retries: {str(e)}")
                 sys.exit(1)
             if not data or 'items' not in data:
                 print(f"⏭️  Skipping page due to missing items: {collectionPaginatedURl}")
@@ -830,63 +877,67 @@ def fetch_total_product_counts(urls):
                 product_url = f'https://www.jdsports.co.nz/product/{item.get("description", "").replace(" ", "-").lower()}/{item.get("plu", "")}'
                 print(f'{count} - {product_url}')
                 
+                product_failed = False
                 try:
-                    product_response = requests.get(product_url, headers=headers, timeout=30)
+                    product_response = fetch_with_retry(product_url, headers=headers)
                     product_data = extract_dataObject_json(product_response.text)
                     product_description = get_product_description(product_response.text)
-                except requests.exceptions.Timeout:
-                    print(f"⏭️  Skipping product due to connection timeout: {product_url}")
-                    log_skipped_product(product_url, "Connection timeout")
-                    failed_skus.add(item.get("plu"))
-                    continue
-                except requests.exceptions.ConnectionError as e:
-                    print(f"⏭️  Skipping product due to connection error: {product_url}")
-                    log_skipped_product(product_url, f"Connection error: {str(e)}")
-                    failed_skus.add(item.get("plu"))
-                    continue
                 except requests.exceptions.RequestException as e:
-                    print(f"⏭️  Skipping product due to request error: {product_url}")
-                    log_skipped_product(product_url, f"Request error: {str(e)}")
-                    failed_skus.add(item.get("plu"))
-                    continue
+                    print(f"⏭️  Product fetch failed after 3 retries: {product_url}")
+                    log_skipped_product(product_url, f"Request error after 3 retries: {str(e)}")
+                    product_failed = True
                 except Exception as e:
-                    print(f"⏭️  Skipping product due to unexpected error: {product_url} - {e}")
+                    print(f"⏭️  Product fetch failed due to unexpected error: {product_url} - {e}")
                     log_skipped_product(product_url, f"Unexpected error: {str(e)}")
+                    product_failed = True
+
+                if not product_failed:
+                    if not product_data:
+                        print(f"⏭️  Product data extraction failed: {product_url}")
+                        log_skipped_product(product_url, "Missing dataObject")
+                        product_failed = True
+
+                if not product_failed:
+                    try:
+                        data_price, data_previous_price, original_cost, price_div_found = extract_price_data(product_response.text)
+                    except Exception as e:
+                        print(f"⏭️  Price extraction error: {product_url} - {e}")
+                        log_skipped_product(product_url, f"Price extraction error: {str(e)}")
+                        product_failed = True
+
+                if not product_failed:
+                    if not price_div_found:
+                        print(f"⏭️  Missing recentData div: {product_url}")
+                        log_skipped_product(product_url, "Missing recentData div")
+                        product_failed = True
+                    elif not data_price or not data_price.strip():
+                        print(f"⏭️  Empty price data: {product_url}")
+                        log_skipped_product(product_url, "Empty price data")
+                        product_failed = True
+
+                if not product_failed:
+                    try:
+                        product_images = get_product_images(product_description, product_response.text)
+                    except Exception as e:
+                        print(f"⏭️  Image extraction error: {product_url} - {e}")
+                        log_skipped_product(product_url, f"Image extraction error: {str(e)}")
+                        product_failed = True
+
+                # If product failed, add minimal data so it gets tracked and set to draft
+                if product_failed:
                     failed_skus.add(item.get("plu"))
+                    item_sku = item.get("plu", "")
+                    item_name = html.unescape(item.get("description", ""))
+                    all_product_data.append({
+                        "sku": item_sku,
+                        "name": item_name,
+                        "failed": True,
+                    })
+                    print(f"⚠️  Marked as failed, will set to DRAFT on Shopify: {item_sku} - {item_name}")
+                    count += 1
                     continue
-                
-                # Extract price data from recentData div
-                try:
-                    data_price, data_previous_price, original_cost, price_div_found = extract_price_data(product_response.text)
-                except Exception as e:
-                    print(f"⏭️  Skipping product due to price extraction error: {product_url} - {e}")
-                    log_skipped_product(product_url, f"Price extraction error: {str(e)}")
-                    failed_skus.add(item.get("plu"))
-                    continue
-                
-                # Skip product if recentData div is not found
-                if not price_div_found:
-                    print(f"⏭️  Skipping product due to missing recentData div: {product_url}")
-                    log_skipped_product(product_url, "Missing recentData div")
-                    failed_skus.add(item.get("plu"))
-                    continue
-                
-                # Skip product if price data is empty
-                if not data_price or not data_price.strip():
-                    print(f"⏭️  Skipping product due to empty price data: {product_url}")
-                    log_skipped_product(product_url, "Empty price data")
-                    failed_skus.add(item.get("plu"))
-                    continue
-                
+
                 print("\n**************************\n")
-                
-                try:
-                    product_images = get_product_images(product_description, product_response.text)
-                except Exception as e:
-                    print(f"⏭️  Skipping product due to image extraction error: {product_url} - {e}")
-                    log_skipped_product(product_url, f"Image extraction error: {str(e)}")
-                    failed_skus.add(item.get("plu"))
-                    continue
                 
                 # Add quantity to each variant based on button presence in HTML
                 variants_with_quantity = []
@@ -1001,6 +1052,7 @@ def fetch_total_product_counts(urls):
 import time
 
 start_time = time.time()
+open("skipped_products.txt", "w").close()
 fetch_total_product_counts(URLS)
 end_time = time.time()
 execution_time_minutes = (end_time - start_time) / 60
