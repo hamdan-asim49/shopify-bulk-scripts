@@ -10,6 +10,7 @@ import html
 import sys
 from datetime import datetime
 import os
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 # Add parent directory to path to import parameters
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -559,12 +560,64 @@ def run_bulk_product_set(staged_upload_path):
     print(json.dumps(data, indent=2))
     return data
 
-def fetch_with_retry(url, headers=None, timeout=30, retries=3, delay=5):
-    """Fetch a URL with retry logic. Returns response or raises the last exception."""
+BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet"}
+BLOCKED_URL_PATTERNS = ("google-analytics", "googletagmanager", "facebook", "doubleclick", "analytics", "taggstar", "exponea", "tiktok")
+
+def _block_unnecessary_resources(route):
+    if route.request.resource_type in BLOCKED_RESOURCE_TYPES:
+        route.abort()
+    elif any(p in route.request.url for p in BLOCKED_URL_PATTERNS):
+        route.abort()
+    else:
+        route.continue_()
+
+_pw_instance = None
+_pw_browser = None
+_pw_page = None
+
+def _get_pw_page():
+    global _pw_instance, _pw_browser, _pw_page
+    if _pw_page is None:
+        _pw_instance = sync_playwright().start()
+        _pw_browser = _pw_instance.chromium.launch(headless=True)
+        _pw_page = _pw_browser.new_page()
+        _pw_page.route("**/*", _block_unnecessary_resources)
+    return _pw_page
+
+def close_pw():
+    global _pw_instance, _pw_browser, _pw_page
+    if _pw_page:
+        _pw_page.close()
+        _pw_page = None
+    if _pw_browser:
+        _pw_browser.close()
+        _pw_browser = None
+    if _pw_instance:
+        _pw_instance.stop()
+        _pw_instance = None
+
+class _Response:
+    """Minimal response wrapper so callers can still use .text like before."""
+    def __init__(self, text):
+        self.text = text
+
+def fetch_with_retry(url, headers=None, timeout=30, retries=3, delay=5, use_playwright=True):
+    """Fetch a URL. Uses Playwright (real browser) to bypass bot protection."""
     for attempt in range(1, retries + 1):
         try:
-            response = requests.get(url, headers=headers or {}, timeout=timeout)
-            return response
+            if use_playwright:
+                page = _get_pw_page()
+                page.goto(url, timeout=timeout * 1000, wait_until="domcontentloaded")
+                return _Response(page.content())
+            else:
+                response = requests.get(url, headers=headers or {}, timeout=timeout)
+                return response
+        except PlaywrightTimeoutError:
+            if attempt < retries:
+                print(f"   Attempt {attempt}/{retries} timed out for {url}, retrying in {delay}s...")
+                time.sleep(delay)
+            else:
+                raise
         except Exception as e:
             if attempt < retries:
                 print(f"   Attempt {attempt}/{retries} failed for {url}: {e}")
@@ -826,20 +879,16 @@ def fetch_total_product_counts(urls):
 
     for url in urls:
         try:
-            response = fetch_with_retry(url, headers=headers)
+            response = fetch_with_retry(url, headers=headers, use_playwright=True)
             data = extract_dataObject_json(response.text)
-        except requests.exceptions.RequestException as e:
-            print(f"⏭️  Skipping URL due to connection error after 3 retries: {url} - {e}")
-            log_skipped_product(url, f"Connection error after 3 retries: {str(e)}")
-            continue
         except Exception as e:
-            print(f"⏭️  Skipping URL due to unexpected error after 3 retries: {url} - {e}")
-            log_skipped_product(url, f"Unexpected error after 3 retries: {str(e)}")
-            continue
+            print(f"❌ Failed to fetch main URL, exiting: {url} - {e}")
+            log_skipped_product(url, f"Fatal error: {str(e)}")
+            sys.exit(1)
         if not data:
-            print(f"⏭️  Skipping URL due to missing dataObject: {url}")
+            print(f"❌ No dataObject found on main URL, exiting: {url}")
             log_skipped_product(url, "Missing dataObject")
-            continue
+            sys.exit(1)
         totalPages = data.get('itemPageCount', 0)
         itemsPerPage = data.get('itemPagePer', 0)
         itemsDone = 0
@@ -847,7 +896,7 @@ def fetch_total_product_counts(urls):
         for page in range(1, totalPages + 1):
             collectionPaginatedURl = f"{url}?from={itemsDone}"
             try:
-                response = fetch_with_retry(collectionPaginatedURl, headers=headers)
+                response = fetch_with_retry(collectionPaginatedURl, headers=headers, use_playwright=True)
                 data = extract_dataObject_json(response.text)
             except requests.exceptions.RequestException as e:
                 print(f"❌ Could not fetch products from a page after 3 retries: {collectionPaginatedURl}")
@@ -878,7 +927,7 @@ def fetch_total_product_counts(urls):
                 
                 product_failed = False
                 try:
-                    product_response = fetch_with_retry(product_url, headers=headers)
+                    product_response = fetch_with_retry(product_url, headers=headers, use_playwright=True)
                     product_data = extract_dataObject_json(product_response.text)
                     product_description = get_product_description(product_response.text)
                 except requests.exceptions.RequestException as e:
@@ -997,10 +1046,10 @@ def fetch_total_product_counts(urls):
     
     if skus_to_delete:
         print(f"   Products to delete: {list(skus_to_delete)}")
-        
+
         # Delete products that are no longer on JD Sports
         delete_products_from_shopify(skus_to_delete)
-        
+
         # Remove deleted SKUs from processed_skus
         for sku in skus_to_delete:
             if sku in processed_skus:
@@ -1035,7 +1084,7 @@ def fetch_total_product_counts(urls):
     
     print(f"📊 Summary: {len(updates)} updates, {len(creates)} creates, {len(skus_to_delete)} deletions")
     #print(all_product_data)
-    
+
     # Only proceed with create/update operations if there are products to process
     if all_product_data:
         staged = create_staged_upload()
@@ -1048,11 +1097,12 @@ def fetch_total_product_counts(urls):
         else:
             print("❌ Failed to create staged upload")
 
-import time
-
 start_time = time.time()
 open("skipped_products.txt", "w").close()
-fetch_total_product_counts(URLS)
+try:
+    fetch_total_product_counts(URLS)
+finally:
+    close_pw()
 end_time = time.time()
 execution_time_minutes = (end_time - start_time) / 60
 print(f"\n⏱️  Total execution time: {execution_time_minutes:.2f} minutes")
